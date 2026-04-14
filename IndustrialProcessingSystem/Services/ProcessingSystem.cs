@@ -1,9 +1,11 @@
-﻿using System;
+﻿using IndustrialProcessingSystem.Enums;
+using IndustrialProcessingSystem.Models;
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
-using IndustrialProcessingSystem.Models;
+using System.Xml.Linq;
 
 namespace IndustrialProcessingSystem.Services
 {
@@ -11,7 +13,24 @@ namespace IndustrialProcessingSystem.Services
     {
         public event Action<Guid, int>? JobCompleted;
         public event Action<Guid, string>? JobFailed;
-        private PriorityQueue<Job, int>? queue;
+
+        private readonly PriorityQueue<Job, int> queue;
+        private readonly int maxQueueSize;
+        private readonly int workerCount;
+
+        public ProcessingSystem(int workerCount, int maxQueueSize, IEnumerable<Job> initialJobs)
+        {
+
+            this.workerCount = workerCount;
+            this.maxQueueSize = maxQueueSize;
+
+            queue = new PriorityQueue<Job, int>();
+
+            foreach (var job in initialJobs)
+            {
+                queue.Enqueue(job, job.Priority);
+            }
+        }
 
         public JobHandle Submit(Job job)
         {

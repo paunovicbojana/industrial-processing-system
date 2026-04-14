@@ -8,8 +8,8 @@ namespace IndustrialProcessingSystem.Models
 {
     public class JobHandle
     {
-        private Guid Id { get; init; }
-        private Task<int> Result { get; init; }
+        public Guid Id { get; init; }
+        public Task<int> Result { get; init; }
 
         public JobHandle(Guid id, Task<int> result)
         {

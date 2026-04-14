@@ -9,10 +9,10 @@ namespace IndustrialProcessingSystem.Models
 {
     public class Job
     {
-        private Guid Id {  get; init; }
-        private JobType Type { get; init; }
-        private string Payload { get; init; } = string.Empty;
-        private int Priority { get; init; }
+        public Guid Id {  get; init; }
+        public JobType Type { get; init; }
+        public string Payload { get; init; } = string.Empty;
+        public int Priority { get; init; }
 
         public Job(Guid id, JobType type, string payload, int priority)
         {
