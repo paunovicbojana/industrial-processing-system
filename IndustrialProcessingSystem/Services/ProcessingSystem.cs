@@ -238,19 +238,16 @@ namespace IndustrialProcessingSystem.Services
 
                     lock (statsLock)
                     {
+                        var allTypes = executionTimes.Keys.Union(failedCounts.Keys).OrderBy(t => t);
+
                         report = new XElement("Report",
                             new XAttribute("GeneratedAt", DateTime.Now),
-
-                            executionTimes.Select(kvp =>
-                                new XElement("JobType",
-                                    new XAttribute("Type", kvp.Key),
-                                    new XAttribute("Count", kvp.Value.Count),
-                                    new XAttribute("AverageTime",
-                                        kvp.Value.Count > 0 ? kvp.Value.Average() : 0),
-                                    new XAttribute("Failed",
-                                        failedCounts.GetValueOrDefault(kvp.Key))
-                                )
-                            )
+                            allTypes.Select(type => new XElement("JobType",
+                                new XAttribute("Type", type),
+                                new XAttribute("Count", executionTimes.TryGetValue(type, out var times) ? times.Count : 0),
+                                new XAttribute("AverageTime", times?.Count > 0 ? times.Average() : 0),
+                                new XAttribute("Failed", failedCounts.GetValueOrDefault(type))
+                            ))
                         );
                         executionTimes.Clear();
                         failedCounts.Clear();
