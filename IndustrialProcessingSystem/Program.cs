@@ -17,3 +17,15 @@ var initialJobs = from element in xml.Element("Jobs")!.Descendants("Job")
 var system = new ProcessingSystem(workerCount, maxQueueSize, initialJobs);
 
 Console.WriteLine($"Pokretanje sistema: {workerCount} niti, max queue: {maxQueueSize}");
+
+var producerThreads = Enumerable.Range(0, workerCount)
+    .Select(_ => new Thread(() =>
+    {
+        while (true)
+        {
+            /*var job = ; 
+            system.Submit(job);*/
+        }
+    })).ToList();
+
+producerThreads.ForEach(t => t.Start());
