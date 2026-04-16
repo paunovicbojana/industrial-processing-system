@@ -1,64 +1,48 @@
 ﻿using IndustrialProcessingSystem.Enums;
 using IndustrialProcessingSystem.Models;
-using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Xml.Linq;
 
-namespace IndustrialProcessingSystem.Services
-{
-    public class ProcessingSystem
-    {
+namespace IndustrialProcessingSystem.Services {
+    public class ProcessingSystem {
         private readonly string path;
         public event Func<Guid, int, Task>? JobCompleted;
         public event Func<Guid, string, Task>? JobFailed;
 
         private readonly PriorityQueue<Job, int> queue;
-        private readonly HashSet<Guid> submittedJobs = new();
-        private readonly Dictionary<Guid, Job> allJobs = new();
+        private readonly Dictionary<Guid, Job> submittedJobs = new();
         private readonly Dictionary<Guid, TaskCompletionSource<int>> pendingTcs = new();
-
         private readonly int maxQueueSize;
 
-        private readonly ConcurrentDictionary<JobType, List<long>> executionTimes = new();
-        private readonly ConcurrentDictionary<JobType, int> failedCounts = new();
+        private readonly Dictionary<JobType, List<long>> executionTimes = new();
+        private readonly Dictionary<JobType, int> failedCounts = new();
         private readonly object statsLock = new();
 
         private readonly Timer reportTimer;
         private int reportIndex = 0;
         private readonly object reportLock = new();
 
-        public ProcessingSystem(int workerCount, int maxQueueSize, IEnumerable<Job> initialJobs, string basePath)
-        {
+        public ProcessingSystem(int workerCount, int maxQueueSize, IEnumerable<Job> initialJobs, string basePath) {
             this.maxQueueSize = maxQueueSize;
             this.path = basePath;
             queue = new PriorityQueue<Job, int>();
 
-            for (int i = 0; i < workerCount; i++)
-            {
-                var worker = new Thread(() => WorkerLoop().GetAwaiter().GetResult());
-                worker.IsBackground = true;
-                worker.Start();
-            }
+            for (int i = 0; i < workerCount; i++) Task.Run(() => WorkerLoop());
 
             reportTimer = new Timer(_ => GenerateReport(), null, TimeSpan.FromMinutes(1), TimeSpan.FromMinutes(1));
 
-            foreach (var job in initialJobs)
-                Submit(job);
+            foreach (var job in initialJobs) Submit(job);
         }
 
-        private async Task WorkerLoop()
-        {
+        private async Task WorkerLoop() {
             Console.WriteLine($"[Worker {Thread.CurrentThread.ManagedThreadId}] started");
 
-            while (true)
-            {
+            while (true) {
                 Job job;
                 TaskCompletionSource<int> tcs;
 
-                lock (queue)
-                {
-                    while (queue.Count == 0)
-                    {
+                lock (queue) {
+                    while (queue.Count == 0) {
                         Console.WriteLine($"[Worker {Thread.CurrentThread.ManagedThreadId}] waiting...");
                         Monitor.Wait(queue);
                     }
@@ -67,112 +51,95 @@ namespace IndustrialProcessingSystem.Services
                     pendingTcs.TryGetValue(job.Id, out tcs!);
                 }
 
-                Console.WriteLine($"[Worker {Thread.CurrentThread.ManagedThreadId}] processing {job.Id} ({job.Type})");
+                if (tcs == null) {
+                    Console.WriteLine($"[Worker] No TCS found for job {job.Id}, skipping");
+                    continue;
+                }
 
-                if (tcs != null)
-                    await Process(job, tcs);
+                Console.WriteLine($"[Worker {Thread.CurrentThread.ManagedThreadId}] processing {job.Id} ({job.Type})");
+                await Process(job, tcs);
             }
         }
 
-        public JobHandle Submit(Job job)
-        {
-            lock (queue)
-            {
-                if (queue.Count >= maxQueueSize)
-                    return null!;
-                if (submittedJobs.Contains(job.Id))
-                    return null!;
-
-                submittedJobs.Add(job.Id);
+        public JobHandle Submit(Job job) {
+            lock (queue) {
+                if (queue.Count >= maxQueueSize) return null!;
+                if (submittedJobs.ContainsKey(job.Id)) return null!;
 
                 var tcs = new TaskCompletionSource<int>();
-                
-                allJobs[job.Id] = job;
+                submittedJobs[job.Id] = job;
                 pendingTcs[job.Id] = tcs;
-               
                 queue.Enqueue(job, job.Priority);
 
-                Monitor.Pulse(queue); 
-
+                Monitor.Pulse(queue);
                 return new JobHandle(job.Id, tcs.Task);
             }
         }
 
-        private async Task Process(Job job, TaskCompletionSource<int> tcs)
-        {
-            var sw = Stopwatch.StartNew();
+        private async Task Process(Job job, TaskCompletionSource<int> tcs) {
+            Exception? lastException = null;
 
-            for (int attempt = 0; attempt < 3; attempt++)
-            {
-                try
-                {
-                    var resultTask = job.Type switch
-                    {
+            for (int attempt = 0; attempt < 3; attempt++) {
+                var sw = Stopwatch.StartNew();
+
+                try {
+                    var resultTask = job.Type switch {
                         JobType.Prime => Task.Run(() => ExecutePrime(job.Payload)),
                         JobType.IO => ExecuteIO(job.Payload),
-                        _ => throw new InvalidOperationException()
+                        _ => throw new InvalidOperationException($"Unknown job type: {job.Type}")
                     };
 
                     var completed = await Task.WhenAny(resultTask, Task.Delay(2000));
 
-                    if (completed == resultTask)
-                    {
-                        var result = await resultTask;
-                        tcs.TrySetResult(result);
-                        
-                        sw.Stop();
+                    if (completed != resultTask) throw new TimeoutException("Job exceeded 2s limit");
 
-                        lock (statsLock)
-                        {
-                            if (!executionTimes.ContainsKey(job.Type))
-                                executionTimes[job.Type] = new List<long>();
+                    var result = await resultTask;
+                    sw.Stop();
 
-                            executionTimes[job.Type].Add(sw.ElapsedMilliseconds);
-                        }
+                    tcs.TrySetResult(result);
 
-                        if (JobCompleted != null)
-                            await JobCompleted.Invoke(job.Id, result);
-                        return;
+                    lock (statsLock) {
+                        if (!executionTimes.ContainsKey(job.Type))
+                            executionTimes[job.Type] = new List<long>();
+                        executionTimes[job.Type].Add(sw.ElapsedMilliseconds);
                     }
+
+                    lock (queue) 
+                        pendingTcs.Remove(job.Id);
+
+                    await (JobCompleted?.Invoke(job.Id, result) ?? Task.CompletedTask);
+                    return;
                 }
-                catch (Exception ex)
-                {
-                    if (attempt == 2)
-                    {
-                        tcs.TrySetException(ex);
-                        lock (statsLock)
-                        {
-                            failedCounts.AddOrUpdate(job.Type, 1, (_, v) => v + 1);
-                        }
-                        if (JobFailed != null)
-                            await JobFailed.Invoke(job.Id, "ABORT");
-                        return;
-                    }
+                catch (Exception ex) {
+                    sw.Stop();
+                    lastException = ex;
+                    Console.WriteLine($"[Worker] Job {job.Id} attempt {attempt + 1} failed: {ex.Message}");
+
+                    if (attempt < 2) await Task.Delay(100);
                 }
             }
 
-            tcs.TrySetCanceled();
+            // abort when all 3 attempts are exhausted
+            tcs.TrySetException(lastException!);
+
             lock (statsLock)
-            {
-                failedCounts.AddOrUpdate(job.Type, 1, (_, v) => v + 1);
-            }
-            if (JobFailed != null)
-                await JobFailed.Invoke(job.Id, "ABORT");
+                failedCounts[job.Type] = failedCounts.GetValueOrDefault(job.Type) + 1;
+
+            lock (queue) pendingTcs.Remove(job.Id);
+
+            await (JobFailed?.Invoke(job.Id, "ABORT") ?? Task.CompletedTask);
         }
 
-        private int ExecutePrime(string payload)
-        {
+        private int ExecutePrime(string payload) {
             // payload format: "numbers:10_000,threads:3"
             var parts = payload.Split(',');
-            var number = int.Parse(parts[0].Split(":")[1].Replace("_", ""));
-            var threads = int.Parse(parts[1].Split(":")[1]);
-            threads = Math.Clamp(threads, 1, 8);
+            var number = int.Parse(parts[0].Split(':')[1].Replace("_", ""));
+            var threads = Math.Clamp(int.Parse(parts[1].Split(':')[1]), 1, 8);
 
             int count = 0;
             var options = new ParallelOptions { MaxDegreeOfParallelism = threads };
 
-            Parallel.For(2, number + 1, options, (n) =>
-            {
+            Parallel.For(2, number + 1, options, n => {
                 if (IsPrime(n))
                     Interlocked.Increment(ref count);
             });
@@ -180,85 +147,75 @@ namespace IndustrialProcessingSystem.Services
             return count;
         }
 
-        private bool IsPrime(int n)
-        {
+        private bool IsPrime(int n) {
             if (n < 2) return false;
             for (int i = 2; i <= Math.Sqrt(n); i++)
                 if (n % i == 0) return false;
             return true;
         }
 
-        private Task<int> ExecuteIO(string payload)
-        {
+        private async Task<int> ExecuteIO(string payload) {
             // payload format: "delay:1_000"
             var delay = int.Parse(payload.Split(':')[1].Replace("_", ""));
-
-            return Task.Run(() =>
-            {
-                Thread.Sleep(delay);
-                return new Random().Next(0, 101);
-            });
+            await Task.Delay(delay);
+            return Random.Shared.Next(0, 101);
         }
 
-        public IEnumerable<Job> GetTopJobs(int n)
-        {
+        public IEnumerable<Job> GetTopJobs(int n) {
             lock (queue)
-            {
                 return queue.UnorderedItems
                     .OrderBy(x => x.Priority)
                     .Take(n)
                     .Select(x => x.Element)
                     .ToList();
+        }
+
+        public Job GetJob(Guid id) {
+            lock (queue) {
+                submittedJobs.TryGetValue(id, out var job);
+                return job ?? throw new KeyNotFoundException($"Job {id} not found");
             }
         }
 
-        public Job GetJob(Guid id)
-        {
-            lock (queue)
-            {
-                allJobs.TryGetValue(id, out var job);
-                return job ?? throw new KeyNotFoundException();
-            }
-        }
-
-        private void GenerateReport()
-        {
-            lock (reportLock)
-            {
-                try
-                {
+        private void GenerateReport() {
+            lock (reportLock) {
+                try {
                     var reportsDir = Path.Combine(this.path, "Reports");
                     Directory.CreateDirectory(reportsDir);
 
-                    var index = reportIndex++;
-                    var fileName = $"report_{index % 10}.xml";
+                    var fileName = $"report_{reportIndex++ % 10}.xml";
                     var filePath = Path.Combine(reportsDir, fileName);
 
                     XElement report;
 
-                    lock (statsLock)
-                    {
-                        var allTypes = executionTimes.Keys.Union(failedCounts.Keys).OrderBy(t => t);
+                    lock (statsLock) {
+                        // for types with only failures to appear in the report
+                        var allTypes = executionTimes.Keys
+                            .Union(failedCounts.Keys)
+                            .OrderBy(t => t);
 
                         report = new XElement("Report",
                             new XAttribute("GeneratedAt", DateTime.Now),
-                            allTypes.Select(type => new XElement("JobType",
-                                new XAttribute("Type", type),
-                                new XAttribute("Count", executionTimes.TryGetValue(type, out var times) ? times.Count : 0),
-                                new XAttribute("AverageTime", times?.Count > 0 ? times.Average() : 0),
-                                new XAttribute("Failed", failedCounts.GetValueOrDefault(type))
-                            ))
+                            allTypes.Select(type => {
+                                executionTimes.TryGetValue(type, out var times);
+                                return new XElement("JobType",
+                                    new XAttribute("Type", type),
+                                    new XAttribute("Count", times?.Count ?? 0),
+                                    new XAttribute("AverageTime", times?.Count > 0 ? times.Average() : 0),
+                                    new XAttribute("Failed", failedCounts.GetValueOrDefault(type))
+                                );
+                            })
                         );
+
+                        // reset so next report covers only the past minute
                         executionTimes.Clear();
                         failedCounts.Clear();
                     }
 
                     report.Save(filePath);
-
                     Console.WriteLine($"[REPORT] Saved: {filePath}");
                 }
-                catch (Exception ex)
-                {
+                catch (Exception ex) {
                     Console.WriteLine($"[REPORT ERROR] {ex.Message}");
                 }
             }

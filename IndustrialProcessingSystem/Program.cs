@@ -5,8 +5,7 @@ using System.Xml.Linq;
 
 var dir = Directory.GetCurrentDirectory();
 
-while (!File.Exists(Path.Combine(dir, "IndustrialProcessingSystem.csproj")))
-{
+while (!File.Exists(Path.Combine(dir, "IndustrialProcessingSystem.csproj"))) {
     dir = Directory.GetParent(dir)!.FullName;
 }
 
@@ -27,8 +26,7 @@ var initialJobs = from element in xml.Element("Jobs")!.Descendants("Job")
 
 var system = new ProcessingSystem(workerCount, maxQueueSize, initialJobs, dir);
 
-system.JobCompleted += async (id, result) =>
-{
+system.JobCompleted += async (id, result) => {
     var line = $"[{DateTime.Now}] [COMPLETED] {id}, {result}";
     await logLock.WaitAsync();
     try { await File.AppendAllTextAsync(path, line + Environment.NewLine); }
@@ -36,8 +34,7 @@ system.JobCompleted += async (id, result) =>
     Console.WriteLine(line);
 };
 
-system.JobFailed += async (id, reason) =>
-{
+system.JobFailed += async (id, reason) => {
     var line = $"[{DateTime.Now}] [FAILED] {id}, {reason}";
     await logLock.WaitAsync();
     try { await File.AppendAllTextAsync(path, line + Environment.NewLine); }
@@ -48,10 +45,8 @@ system.JobFailed += async (id, reason) =>
 var jobTypes = Enum.GetValues<JobType>();
 
 var producerThreads = Enumerable.Range(0, workerCount)
-    .Select(_ => new Thread(() =>
-    {
-        while (true)
-        {
+    .Select(_ => new Thread(() => {
+        while (true) {
             var rng = Random.Shared;
             var type = jobTypes[rng.Next(jobTypes.Length)];
             var payload = type == JobType.Prime
