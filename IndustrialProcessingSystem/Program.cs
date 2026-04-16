@@ -31,7 +31,7 @@ system.JobCompleted += async (id, result) => {
     await logLock.WaitAsync();
     try { await File.AppendAllTextAsync(path, line + Environment.NewLine); }
     finally { logLock.Release(); }
-    Console.WriteLine(line);
+    //Console.WriteLine(line);
 };
 
 system.JobFailed += async (id, reason) => {
@@ -39,7 +39,7 @@ system.JobFailed += async (id, reason) => {
     await logLock.WaitAsync();
     try { await File.AppendAllTextAsync(path, line + Environment.NewLine); }
     finally { logLock.Release(); }
-    Console.WriteLine(line);
+    //Console.WriteLine(line);
 };
 
 var jobTypes = Enum.GetValues<JobType>();
@@ -50,7 +50,7 @@ var producerThreads = Enumerable.Range(0, workerCount)
             var rng = Random.Shared;
             var type = jobTypes[rng.Next(jobTypes.Length)];
             var payload = type == JobType.Prime
-                ? $"numbers:{rng.Next(1000, 50000)},threads:{rng.Next(1, 9)}"
+                ? $"numbers:{rng.Next(10000, 100000)},threads:{rng.Next(1, 9)}"
                 : $"delay:{rng.Next(100, 3000)}";
             var priority = rng.Next(1, 6);
 
@@ -58,7 +58,7 @@ var producerThreads = Enumerable.Range(0, workerCount)
 
             var handle = system.Submit(job);
             if (handle != null)
-                Console.WriteLine($"Submitted {job.Id} ({type}, priority {priority})");
+                //Console.WriteLine($"Submitted {job.Id} ({type}, priority {priority})");
 
             Thread.Sleep(rng.Next(200, 1000));
         }

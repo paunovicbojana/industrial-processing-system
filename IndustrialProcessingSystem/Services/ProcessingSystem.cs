@@ -35,7 +35,7 @@ namespace IndustrialProcessingSystem.Services {
         }
 
         private async Task WorkerLoop() {
-            Console.WriteLine($"[Worker {Thread.CurrentThread.ManagedThreadId}] started");
+            //Console.WriteLine($"[Worker {Thread.CurrentThread.ManagedThreadId}] started");
 
             while (true) {
                 Job job;
@@ -43,7 +43,7 @@ namespace IndustrialProcessingSystem.Services {
 
                 lock (queue) {
                     while (queue.Count == 0) {
-                        Console.WriteLine($"[Worker {Thread.CurrentThread.ManagedThreadId}] waiting...");
+                        //Console.WriteLine($"[Worker {Thread.CurrentThread.ManagedThreadId}] waiting...");
                         Monitor.Wait(queue);
                     }
 
@@ -52,11 +52,11 @@ namespace IndustrialProcessingSystem.Services {
                 }
 
                 if (tcs == null) {
-                    Console.WriteLine($"[Worker] No TCS found for job {job.Id}, skipping");
+                    //Console.WriteLine($"[Worker] No TCS found for job {job.Id}, skipping");
                     continue;
                 }
 
-                Console.WriteLine($"[Worker {Thread.CurrentThread.ManagedThreadId}] processing {job.Id} ({job.Type})");
+                //Console.WriteLine($"[Worker {Thread.CurrentThread.ManagedThreadId}] processing {job.Id} ({job.Type})");
                 await Process(job, tcs);
             }
         }
@@ -113,7 +113,7 @@ namespace IndustrialProcessingSystem.Services {
                 catch (Exception ex) {
                     sw.Stop();
                     lastException = ex;
-                    Console.WriteLine($"[Worker] Job {job.Id} attempt {attempt + 1} failed: {ex.Message}");
+                    //Console.WriteLine($"[Worker] Job {job.Id} attempt {attempt + 1} failed: {ex.Message}");
 
                     if (attempt < 2) await Task.Delay(100);
                 }
@@ -178,6 +178,12 @@ namespace IndustrialProcessingSystem.Services {
         }
 
         private void GenerateReport() {
+            Console.WriteLine($"[TOP JOBS @ {DateTime.Now}]");
+
+            int rank = 1;
+            foreach (var job in GetTopJobs(5)) 
+                Console.WriteLine($"#{rank++} [{job.Type}] Priority: {job.Priority} Id: {job.Id}");
+            
             lock (reportLock) {
                 try {
                     var reportsDir = Path.Combine(this.path, "Reports");
